@@ -249,7 +249,10 @@ class CausalSelfAttention(nn.Module):
 
         if cache_context is not None and self.cache_storage is not None:
             with torch.no_grad():
-                self.cache_storage.store_in_cache(k_before_pos, {'v': v, 'is_mem': is_mem_orig})
+                #self.cache_storage.store_in_cache(k_before_pos, {'v': v, 'is_mem': is_mem_orig})
+                self.cache_storage.store_in_cache(k_before_pos, {'v': v, 'is_mem': is_mem_orig}, 
+                                             pos_emb_closure=pos_emb_closure, 
+                                             start_index=start_index)
             
 
         return y, group_prob

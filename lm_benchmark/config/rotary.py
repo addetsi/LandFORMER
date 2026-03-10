@@ -52,7 +52,7 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument('--save_checkpoint_freq', default=None, type=int, required=False)
 
     # Dataset params 
-    parser.add_argument('--dataset', choices=['pg19', 'arxivmath'])
+    parser.add_argument('--dataset', choices=['pg19', 'arxivmath', 'wikitext2'])
     parser.add_argument('--vocab_size', default=50304, type=int)
     parser.add_argument('--mem_freq', default=50, type=none_or_int, required=False, help="Frequency of landmark tokens")
 
@@ -83,13 +83,14 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument('--max_groups_for_softmax', default=16, type=int, required=False, help="Should be at least 2 + max. number of landmark tokens in one chunk.")
     # Inference
     parser.add_argument('--use_cache', action='store_true')
-    parser.add_argument('--lm_cache', default="none", type=str, required=False,
+    parser.add_argument('--lm_cache', default="none", type=str, required=False, 
                         choices=models.caches.registered_caches())
     parser.add_argument('--mem_cache_size', default=None, type=int, required=False)
     parser.add_argument('--mem_cache_freq', default=None, type=int, required=False, help="Frequency to add landmark tokens in the input (block size at inference)")
     parser.add_argument('--cache_topk', default=1, type=int, required=False)
     parser.add_argument('--cache_selection_method', default="per_token_and_head", type=str, required=False,)  
     parser.add_argument('--eval_seq_length', default=512, type=int, required=False, help="Evaluation Length")
+    parser.add_argument('--use_precomputed_keys', default=False, action='store_true', help='Pre-compute adapted keys at storage time (Contribution #1)')
     parser.add_argument('--eval_sample_size', default=None, type=none_or_int, required=False, help="Size of the random subset of validation set used for evaluation")
     parser.add_argument('--mid_length', default=250, type=int, required=False, help="Size of chunks to break the input into")
     parser.add_argument('--allow_cache_during_training', action='store_true') 
