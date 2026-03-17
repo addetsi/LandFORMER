@@ -3,7 +3,7 @@ lm_benchmark/data/datasets/
 wandb/
 exps/
 data/
-scripts/
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
