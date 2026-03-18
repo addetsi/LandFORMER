@@ -26,7 +26,7 @@ import functools
 from .utils import add_mem_tokens
 
 
-PG19_ORIGINAL_PATH = "./data/pg19"
+PG19_ORIGINAL_PATH = "/local/s4251938/data/pg19"
 
 
 def get_path(config):
@@ -38,13 +38,13 @@ def prepare_pg19_data(config):
     print(DATA_PATH)
     os.makedirs(DATA_PATH, exist_ok=True)
     if not os.path.exists(os.path.join(DATA_PATH, 'train.bin')):
-        train_data = np.memmap(os.path.join(PG19_ORIGINAL_PATH, 'train.bin'), dtype=np.uint16, mode='r')
+        train_data = np.memmap(os.path.join(PG19_ORIGINAL_PATH, '/local/s4251938/data/pg19/train.bin'), dtype=np.uint16, mode='r')
         raw_tokenized_train = add_mem_tokens(config.landmark_id, train_data, config.mem_freq)
         train_tokenized = np.array(raw_tokenized_train, dtype=np.uint16) 
         train_tokenized.tofile(os.path.join(DATA_PATH, 'train.bin'))
     
     if not os.path.exists(os.path.join(DATA_PATH, 'val.bin')):
-        val_data = np.memmap(os.path.join(PG19_ORIGINAL_PATH, 'validation.bin'), dtype=np.uint16, mode='r')
+        val_data = np.memmap(os.path.join(PG19_ORIGINAL_PATH, '/local/s4251938/data/pg19/validation.bin'), dtype=np.uint16, mode='r')
         raw_tokenized_eval = add_mem_tokens(config.landmark_id, val_data, config.mem_freq)
         eval_tokenized = np.array(raw_tokenized_eval, dtype=np.uint16)
         eval_tokenized.tofile(os.path.join(DATA_PATH, 'val.bin'))
@@ -54,7 +54,7 @@ def prepare_pg19_data(config):
 def get_pg19_data(config):
     DATA_PATH = get_path(config)
     
-    train_data = np.memmap(os.path.join(DATA_PATH, 'train.bin'), dtype=np.uint16, mode='r')
-    val_data = np.memmap(os.path.join(DATA_PATH, 'val.bin'), dtype=np.uint16, mode='r')
+    train_data = np.memmap(os.path.join(DATA_PATH, '/local/s4251938/data/pg19/train.bin'), dtype=np.uint16, mode='r')
+    val_data = np.memmap(os.path.join(DATA_PATH, '/local/s4251938/data/pg19/validation.bin'), dtype=np.uint16, mode='r')
 
     return {'train': train_data, 'val': val_data}

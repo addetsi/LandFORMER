@@ -12,12 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from . import pg19, arxiv_math, wikitext
+from . import pg19, arxiv_math
 
 PREPARE_GET_DATASET_MAP = {
     "pg19": (pg19.prepare_pg19_data, pg19.get_pg19_data),
     "arxivmath": (arxiv_math.prepare_arxivmath_data, arxiv_math.get_arxivmath_data),
-    "wikitext2": (wikitext.prepare_wikitext_data, wikitext.get_wikitext_data)
 }
 
 
