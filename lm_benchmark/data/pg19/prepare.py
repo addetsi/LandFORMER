@@ -22,16 +22,16 @@ import numpy as np
 gpt2_tokenizer = tiktoken.get_encoding("gpt2")
 def _read_directory(path):
     texts = []
-    for filename in sorted(os.listdir(path)):
-        if filename.endswith(".txt"):
-            print(f"Processing: {filename}")
-            with open(os.path.join(path, filename), 'r', encoding='utf-8', errors='ignore') as f:
+    for filename in os.listdir(path):
+        if filename.endswith(".txt") and filename[:-4].isnumeric():
+            print(filename)
+            with open(os.path.join(path, filename), 'r') as f:
                 texts += gpt2_tokenizer.encode_ordinary(f.read())
                 texts.append(gpt2_tokenizer.eot_token)
     return np.array(texts, dtype=np.uint16)
 
 
-raw_eval_data = _read_directory("../datasets/pg19_mem=50/validation")
+raw_eval_data = _read_directory("validation")
 raw_eval_data.tofile('validation.bin')
-raw_train_data = _read_directory("../datasets/pg19_mem=50/train")
+raw_train_data = _read_directory("train")
 raw_train_data.tofile('train.bin')
