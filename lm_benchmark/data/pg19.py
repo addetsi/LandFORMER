@@ -13,21 +13,10 @@
 # limitations under the License.
 
 import os
-import zipfile
-import urllib
 import numpy as np
-import tiktoken
-import torch
-import regex
-import multiprocessing
-import itertools
-import functools
-
 from .utils import add_mem_tokens
 
-
 PG19_ORIGINAL_PATH = "/local/s4251938/data/pg19"
-
 
 def get_path(config):
     dataset_name = f"pg19_mem={config.mem_freq}"
@@ -35,26 +24,32 @@ def get_path(config):
     
 def prepare_pg19_data(config):
     DATA_PATH = get_path(config)
-    print(DATA_PATH)
+    print(f"Output path: {DATA_PATH}")
     os.makedirs(DATA_PATH, exist_ok=True)
+    
     if not os.path.exists(os.path.join(DATA_PATH, 'train.bin')):
-        train_data = np.memmap(os.path.join(PG19_ORIGINAL_PATH, '/local/s4251938/data/pg19/train.bin'), dtype=np.uint16, mode='r')
+        print("Adding landmarks to training data...")
+        train_data = np.memmap(os.path.join(PG19_ORIGINAL_PATH, 'train.bin'), dtype=np.uint16, mode='r')
         raw_tokenized_train = add_mem_tokens(config.landmark_id, train_data, config.mem_freq)
         train_tokenized = np.array(raw_tokenized_train, dtype=np.uint16) 
         train_tokenized.tofile(os.path.join(DATA_PATH, 'train.bin'))
+        print(f"Saved train.bin with landmarks")
     
     if not os.path.exists(os.path.join(DATA_PATH, 'val.bin')):
-        val_data = np.memmap(os.path.join(PG19_ORIGINAL_PATH, '/local/s4251938/data/pg19/validation.bin'), dtype=np.uint16, mode='r')
+        print("Adding landmarks to validation data...")
+        val_data = np.memmap(os.path.join(PG19_ORIGINAL_PATH, 'validation.bin'), dtype=np.uint16, mode='r')
         raw_tokenized_eval = add_mem_tokens(config.landmark_id, val_data, config.mem_freq)
         eval_tokenized = np.array(raw_tokenized_eval, dtype=np.uint16)
         eval_tokenized.tofile(os.path.join(DATA_PATH, 'val.bin'))
-    print("completed the tokenization process!")
-
+        print(f"Saved val.bin with landmarks")
+    
+    print("Landmark tokens added successfully!")
+    return get_pg19_data(config)
 
 def get_pg19_data(config):
     DATA_PATH = get_path(config)
     
-    train_data = np.memmap(os.path.join(DATA_PATH, '/local/s4251938/data/pg19/train.bin'), dtype=np.uint16, mode='r')
-    val_data = np.memmap(os.path.join(DATA_PATH, '/local/s4251938/data/pg19/validation.bin'), dtype=np.uint16, mode='r')
-
+    train_data = np.memmap(os.path.join(DATA_PATH, 'train.bin'), dtype=np.uint16, mode='r')
+    val_data = np.memmap(os.path.join(DATA_PATH, 'val.bin'), dtype=np.uint16, mode='r')
+    
     return {'train': train_data, 'val': val_data}
