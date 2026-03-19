@@ -30,10 +30,32 @@ def apply_add_mem_tokens(mem_id, tokens_filename, freq, start_idx, end_idx):
             tokens_with_mem.append(mem_id)
     return tokens_with_mem
 
-def add_mem_tokens(mem_id, tokens, freq, n_workers=32):
-    print(len(tokens))
-    with multiprocessing.Pool(n_workers) as pool:
-        ids = list(range(0, len(tokens), 10 * 1000 * 1000))
-        pair_ids = zip(ids, ids[1:] + [len(tokens)])
-        apply = functools.partial(apply_add_mem_tokens, mem_id, tokens.filename, freq)
-        return list(itertools.chain.from_iterable(pool.starmap(apply, pair_ids)))
+def add_mem_tokens(landmark_id, data, mem_freq):
+    """Added landmark tokens - single-threaded"""
+    import numpy as np
+    
+    print(f"\nAdding landmark tokens (single-threaded)")
+    print(f"Input: {len(data):,} tokens")
+    print(f"Landmark ID: {landmark_id}, Frequency: every {mem_freq} tokens")
+    
+    result = []
+    chunk_size = 10_000_000  # 10M tokens per chunk
+    
+    for start in range(0, len(data), chunk_size):
+        end = min(start + chunk_size, len(data))
+        print(f"Processing {start:,} - {end:,}")
+        
+        # Get chunk
+        chunk = data[start:end]
+        
+        # Add landmarks to chunk
+        for i in range(0, len(chunk), mem_freq):
+            block_end = min(i + mem_freq, len(chunk))
+            result.extend(chunk[i:block_end])
+            
+            # Add landmark after each block (except at very end)
+            if block_end < len(chunk):
+                result.append(landmark_id)
+    
+    print(f"Completed! Output: {len(result):,} tokens\n")
+    return np.array(result, dtype=np.uint16)
