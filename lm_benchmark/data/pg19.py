@@ -20,7 +20,8 @@ PG19_ORIGINAL_PATH = "/local/s4251938/data/pg19"
 
 def get_path(config):
     dataset_name = f"pg19_mem={config.mem_freq}"
-    return os.path.join(os.path.dirname(__file__), f"datasets/{dataset_name}/")
+    #return os.path.join(os.path.dirname(__file__), f"datasets/{dataset_name}/")
+    return f"/local/s4251938/data/pg19_processed/mem={config.mem_freq}/"
     
 def prepare_pg19_data(config):
     DATA_PATH = get_path(config)
