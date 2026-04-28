@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from logging import config
 import math
 
 import torch
@@ -26,9 +25,6 @@ class MemLMCacheStorage(LMCacheStorage):
         n_embd_per_head = config.n_embd // config.n_head
         self.register_buffer("cache_mem_k", torch.empty((config.batch_size, config.mem_cache_size, config.mem_cache_freq + 1, config.n_head, n_embd_per_head)), persistent=False)
         self.register_buffer("cache_mem_v", torch.empty((config.batch_size, config.mem_cache_size, config.mem_cache_freq + 1, config.n_head, n_embd_per_head)), persistent=False)
-        self.register_buffer("cache_mem_k_adapted", torch.empty((config.batch_size, config.mem_cache_size, 1, config.n_head, n_embd_per_head)), persistent=False)
-        self.use_precomputed_keys = getattr(config, 'use_precomputed_keys', False)
-
         self.register_buffer("last_incomplete_k", torch.empty((config.batch_size, config.n_head, config.mem_cache_freq + 1, n_embd_per_head)), persistent=False)
         self.register_buffer("last_incomplete_v", torch.empty((config.batch_size, config.n_head, config.mem_cache_freq + 1, n_embd_per_head)), persistent=False)
         self.register_buffer("last_incomplete_ismem", torch.empty((config.batch_size, config.mem_cache_freq + 1), dtype=torch.bool), persistent=False)
@@ -53,7 +49,7 @@ class MemLMCacheStorage(LMCacheStorage):
             return att_incomplete, {'v': last_incomplete_v.clone(), 'is_mem': last_incomplete_mem.clone()}
         
         top_k = self.config.cache_topk
-        k_with_cached_mem = self.cache_mem_k[:B, :self.cache_size, -1].view(B, -1, nh, hs).transpose(1, 2) # (B, nh, T, hs)
+        k_with_cached_mem = self.cache_mem_k[:B, :self.cache_size, -1].view(B, -1, nh, hs).transpose(1, 2)
         mem_indices = torch.cat((
             torch.arange(k_with_cached_mem.shape[2] - self.cache_iter, k_with_cached_mem.shape[2], device=q.device),
             torch.arange(0, k_with_cached_mem.shape[2] - self.cache_iter, device=q.device),
@@ -61,18 +57,9 @@ class MemLMCacheStorage(LMCacheStorage):
 
         mem_indices = torch.where(mem_indices >= (k_with_cached_mem.shape[2] - top_k), mem_indices - (k_with_cached_mem.shape[2] - top_k) + 1, 0)
         mem_token_indices = mem_indices * self.cache_mem_k.shape[2] + self.cache_mem_k.shape[2] - 1
-        #k_with_cached_mem = pos_emb_closure.adapt_keys(k_with_cached_mem, indices=mem_token_indices.unsqueeze(1).expand(B, nh, -1))
-
-        # Contribution #1: Use pre-computed keys if available
-        if self.use_precomputed_keys and hasattr(self, 'cache_mem_k_adapted'):
-            # Use pre-computed adapted landmark keys (skip adapt_keys call!)
-            k_with_cached_mem = self.cache_mem_k_adapted[:B, :self.cache_size, 0].view(B, -1, nh, hs).transpose(1, 2)
-        else:
-            # Original: compute adapted keys every time
-            k_with_cached_mem = pos_emb_closure.adapt_keys(k_with_cached_mem, indices=mem_token_indices.unsqueeze(1).expand(B, nh, -1))
-
+        k_with_cached_mem = pos_emb_closure.adapt_keys(k_with_cached_mem, indices=mem_token_indices.unsqueeze(1).expand(B, nh, -1))
         mem_att = (q @ k_with_cached_mem.transpose(-2, -1)) * (1.0 / math.sqrt(k_with_cached_mem.size(-1)))
-        mem_att = torch.nn.functional.softmax(mem_att, dim=-1) # (B, nh, T, mem_count)
+        mem_att = torch.nn.functional.softmax(mem_att, dim=-1)
         if self.config.cache_selection_method == "max_over_heads":
             mem_att = mem_att.amax(dim=1).unsqueeze(1).expand(B, nh, T, -1)
         elif self.config.cache_selection_method == "per_token_and_head":
@@ -84,27 +71,26 @@ class MemLMCacheStorage(LMCacheStorage):
 
         mem_att = mem_att.topk(dim=-1,k=top_k)[1]
         if top_k > 1:
-            # sort
             mem_att = torch.where(
                 mem_att < self.cache_iter, 
                 (k_with_cached_mem.shape[2] - self.cache_iter) + mem_att, 
                 mem_att - self.cache_iter)
-            mem_att = mem_att.sort(dim=-1)[0] # (B, nh, T, top_k)
+            mem_att = mem_att.sort(dim=-1)[0]
             mem_att = torch.where(
                 mem_att >= (k_with_cached_mem.shape[2] - self.cache_iter), 
                 mem_att - (k_with_cached_mem.shape[2] - self.cache_iter), 
-                mem_att + self.cache_iter) # (B, nh, T, top_k)
+                mem_att + self.cache_iter)
         
         mem_att_or = mem_att
         mem_att = mem_att.permute(0, 2, 3, 1).view(B, T, top_k, 1, nh, 1).expand(B, T, top_k, self.cache_mem_k.shape[2], nh, hs)
         mem_k = self.cache_mem_k[:B].unsqueeze(1).expand(B, T, -1, -1, -1, -1).take_along_dim(mem_att, dim=2).view(B, T, -1, nh, hs)
         mem_k = mem_k.permute((0, 3, 1, 2, 4))
-        mem_v = self.cache_mem_v[:B].unsqueeze(1).expand(B, T, -1, -1, -1, -1).take_along_dim(mem_att, dim=2).view(B, T, -1, nh, hs) # (B, T, top_k * mem_block, nh, hs)
-        mem_v = mem_v.permute((0, 3, 1, 2, 4)) # (B, nh, T, mem_block, hs)
+        mem_v = self.cache_mem_v[:B].unsqueeze(1).expand(B, T, -1, -1, -1, -1).take_along_dim(mem_att, dim=2).view(B, T, -1, nh, hs)
+        mem_v = mem_v.permute((0, 3, 1, 2, 4))
 
         k_indices = torch.arange(0, self.cache_mem_k.shape[2] * top_k, device=q.device)
         chosen_indices = mem_indices.view(B, 1, 1, -1).expand(B, nh, T, -1).take_along_dim(mem_att_or, dim=-1)
-        k_indices = (((chosen_indices > 0) * self.cache_mem_k.shape[2]).unsqueeze(-1) + k_indices.view(1, 1, 1, top_k, -1)).view(B, nh, T, -1) # (B, nh, T, top_k * mem_block)
+        k_indices = (((chosen_indices > 0) * self.cache_mem_k.shape[2]).unsqueeze(-1) + k_indices.view(1, 1, 1, top_k, -1)).view(B, nh, T, -1)
        
         is_mem = torch.cat((q.new_zeros((B, top_k, self.cache_mem_k.shape[2] - 1), dtype=torch.bool), q.new_ones((B, top_k, 1), dtype=torch.bool)), dim=-1).view(B, -1)
        
@@ -112,16 +98,13 @@ class MemLMCacheStorage(LMCacheStorage):
         att_k = (q.unsqueeze(3) @ mem_k.transpose(-2, -1)).squeeze(3) * (1.0 / math.sqrt(mem_k.size(-1)))
         att_k = pos_emb_closure.adapt_attention_before_softmax(att_k, start_query_index=start_index, k_indices=k_indices)
 
-        
         att_prefix = torch.cat((att_k, att_incomplete), dim=-1)
-
         v_prefix = torch.cat((mem_v, last_incomplete_v), dim=-2)
-
         is_mem_prefix = torch.cat((is_mem, last_incomplete_mem), dim=-1)
 
         return att_prefix, {'v': v_prefix, 'is_mem': is_mem_prefix}
 
-    def store_in_cache(self, keys, values_dict, pos_emb_closure=None, start_index=None):
+    def store_in_cache(self, keys, values_dict, **kwargs):
 
         B, nh, T, hs = keys.size()
         k = torch.cat((self.last_incomplete_k[:B, :, :self.last_incomplete_len], keys), dim=-2)
@@ -153,7 +136,6 @@ class MemLMCacheStorage(LMCacheStorage):
         self.cache_iter = (self.cache_iter + added_size - is_mem_for_cache.shape[1]) % self.cache_mem_k.shape[1]
         self.cache_size += added_size - is_mem_for_cache.shape[1]
         added_size = is_mem_for_cache.shape[1]
-        # torch._assert(added_size <= self.cache_mem_k.shape[1], "Should fit. Sanity check")
 
         if self.cache_iter + added_size >= self.cache_mem_k.shape[1]:
             next_iter = (self.cache_iter + added_size) - self.cache_mem_k.shape[1]
@@ -170,35 +152,6 @@ class MemLMCacheStorage(LMCacheStorage):
         self.cache_iter = next_iter
         self.cache_size += added_size
 
-        # Contribution #1: Pre-compute adapted landmark keys
-        if self.use_precomputed_keys and pos_emb_closure is not None and added_size > 0:
-            # Only pre-compute landmark keys (position -1 in each block)
-            lm_k = k_for_cache[:, :, -1:, :, :]  # (B, added_size, 1, n_head, n_embd_per_head)
-            B_lm, added_lm, _, nh_lm, hs_lm = lm_k.shape
-            
-            # Flatten for adapt_keys
-            lm_k_flat = lm_k.reshape(B_lm, added_lm, nh_lm, hs_lm).transpose(1, 2)  # (B, nh, added_size, hs)
-            
-            # Compute landmark positions (absolute positions in sequence)
-            # Each landmark is at the end of its block
-            base_pos = start_index if start_index is not None else 0
-            lm_indices = torch.arange(added_lm, device=lm_k.device) * self.cache_mem_k.shape[2] + (self.cache_mem_k.shape[2] - 1)
-            lm_indices = lm_indices + base_pos
-            lm_indices = lm_indices.unsqueeze(0).unsqueeze(0).expand(B_lm, nh_lm, -1)  # (B, nh, added_size)
-            
-            # Pre-compute adapted keys
-            lm_k_adapted = pos_emb_closure.adapt_keys(lm_k_flat, indices=lm_indices)
-            lm_k_adapted = lm_k_adapted.transpose(1, 2).reshape(B_lm, added_lm, 1, nh_lm, hs_lm)
-            
-            # Store in circular buffer (same pattern as cache_mem_k)
-            if self.cache_iter + added_lm >= self.cache_mem_k_adapted.shape[1]:
-                next_iter_adapted = (self.cache_iter + added_lm) - self.cache_mem_k_adapted.shape[1]
-                rem_adapted = self.cache_mem_k_adapted.shape[1] - self.cache_iter
-                self.cache_mem_k_adapted[:B_lm, :next_iter_adapted].copy_(lm_k_adapted[:, rem_adapted:])
-                self.cache_mem_k_adapted[:B_lm, self.cache_iter:].copy_(lm_k_adapted[:, :rem_adapted])
-            else:
-                next_iter_adapted = self.cache_iter + added_lm
-                self.cache_mem_k_adapted[:B_lm, self.cache_iter:next_iter_adapted].copy_(lm_k_adapted)
 
 class MemLMCacheContext(object):
     def __init__(self):
@@ -219,12 +172,8 @@ class MemLMCache(LMCache):
         return MemLMCacheContext
 
     def forward(self, x):
-        
         previous_incomplete_len = self.last_incomplete_len
-        #print("Concatenating with {}".format(previous_incomplete_len))
-        #print("Being forward", x.shape)
         B, T = x.size()
-        
         incomplete_placeholder = x.new_full((B, previous_incomplete_len), -1)
         x = torch.cat((incomplete_placeholder, x), dim=-1)
         B, T = x.size()
@@ -235,8 +184,6 @@ class MemLMCache(LMCache):
         mem_x = torch.cat((mem_x, mem_x.new_full((mem_x.shape[0], mem_x.shape[1], 1), self.config.landmark_id)), dim=-1)
         x = torch.cat((mem_x.view(B, -1), incomplete_x), dim=-1)[:, previous_incomplete_len:]
         self.last_incomplete_len = incomplete_len
-        #print("End forward", x.shape)
-        #print(x)
         prev_total_len = self.total_len
         self.total_len += x.shape[1]
         start_index = min(prev_total_len // (self.config.mem_cache_freq + 1), (self.config.cache_topk + 1)) * (self.config.mem_cache_freq + 1) + previous_incomplete_len
@@ -263,4 +210,3 @@ class MemLMCache(LMCache):
         super().clear_state()
         self.last_incomplete_len = 0
         self.total_len = 0
-        

@@ -52,6 +52,22 @@ def train_base(model, opt, data, scheduler, iterations, acc_steps, batch_size, s
 
     stats = {'train_loss': [], 'val_loss': [], 'val_pp': [], 'val_acc': []}
 
+    # Resume from latest checkpoint if available
+    import glob
+    existing_ckpts = sorted(glob.glob(f"{ckpt_path}/ckpt_*.pt"))
+    if existing_ckpts:
+        # Find the latest checkpoint by iteration number
+        latest_ckpt = max(existing_ckpts, key=lambda x: int(x.split('_')[-1].replace('.pt', '')))
+        print(f"Resuming from checkpoint: {latest_ckpt}")
+        checkpoint = torch.load(latest_ckpt, map_location=extra_args.device)
+        distributed_backend.get_raw_model(model).load_state_dict(checkpoint['model'])
+        opt.load_state_dict(checkpoint['optimizer'])
+        scheduler.load_state_dict(checkpoint['scheduler'])
+        itr = checkpoint['itr']
+        substep = itr * acc_steps
+        print(f"Resumed at iteration {itr}")
+        del checkpoint
+
     num_substeps_per_epoch = len(data['train']) // (batch_size * sequence_length)
     
     if not extra_args.no_compile:

@@ -56,6 +56,11 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument('--vocab_size', default=50304, type=int)
     parser.add_argument('--mem_freq', default=50, type=none_or_int, required=False, help="Frequency of landmark tokens")
 
+    # Landmark selection strategy
+    parser.add_argument('--landmark_selection', default='positional', type=str, 
+                    choices=['positional', 'norm', 'centrality'], 
+                    help="Landmark selection strategy: positional (baseline), norm-based, or centrality-based")
+
     # Model params
     parser.add_argument('--model', default='base_rotary', choices=models.registered_models())
     parser.add_argument('--dropout', default=0.0, type=float)

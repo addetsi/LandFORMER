@@ -1,18 +1,3 @@
-# Copyright 2023 Amirkeivan Mohtashami, Martin Jaggi
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-
 import os
 import numpy as np
 from .utils import add_mem_tokens
@@ -49,6 +34,19 @@ def prepare_pg19_data(config):
 
 def get_pg19_data(config):
     DATA_PATH = get_path(config)
-    train_data = np.memmap(os.path.join(DATA_PATH, 'train.bin'), dtype=np.uint16, mode='r')
-    val_data = np.memmap(os.path.join(DATA_PATH, 'val.bin'), dtype=np.uint16, mode='r')
+    
+    use_cache = getattr(config, 'use_cache', False)
+    landmark_selection = getattr(config, 'landmark_selection', 'positional')
+    
+    # Use raw data (no landmarks) when:
+    # 1. Cache is enabled (cache inserts landmarks itself)
+    # 2. Content-aware selection is used (model selects its own landmarks)
+    if use_cache or landmark_selection != 'positional':
+        print(f"Using raw data (no pre-inserted landmarks) [cache={use_cache}, selection={landmark_selection}]", flush=True)
+        train_data = np.memmap(os.path.join(PG19_ORIGINAL_PATH, 'train.bin'), dtype=np.uint16, mode='r')
+        val_data = np.memmap(os.path.join(PG19_ORIGINAL_PATH, 'validation.bin'), dtype=np.uint16, mode='r')
+    else:
+        train_data = np.memmap(os.path.join(DATA_PATH, 'train.bin'), dtype=np.uint16, mode='r')
+        val_data = np.memmap(os.path.join(DATA_PATH, 'val.bin'), dtype=np.uint16, mode='r')
+    
     return {'train': train_data, 'val': val_data}
