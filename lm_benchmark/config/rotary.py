@@ -151,5 +151,4 @@ def parse_args(base_parser, args, namespace):
     if landmark_freq != 0 and args.max_groups_for_softmax < args.sequence_length // landmark_freq + 1 + 2:
         print("CRITICAL WARNING: Maximum number of groups for softmax is too low. Adjust with --max_groups_for_softmax.")
 
-    
     return args

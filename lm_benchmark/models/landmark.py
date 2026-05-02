@@ -368,19 +368,22 @@ class GPTBase(nn.Module):
             index_shift = 0
             cache_context = None
         idx, pos_emb_closure = self.transformer.wpe(idx) # position embeddings of shape (1, t, n_embd)
-        # Landmark selection (Contribution #2)
-        landmark_selection = getattr(self.config, 'landmark_selection', 'positional')
-        if landmark_selection == 'positional':
-            is_mem = idx == self.config.landmark_id
-        else:
-            tok_emb_for_selection = self.transformer.wte(idx)
-            if landmark_selection == 'norm':
-                is_mem = self._select_landmarks_norm(tok_emb_for_selection, self.config.mem_freq)
-            elif landmark_selection == 'centrality':
-                is_mem = self._select_landmarks_centrality(tok_emb_for_selection, self.config.mem_freq)
-            else:
-                raise ValueError(f"Unknown landmark_selection: {landmark_selection}")
+        # Landmark positions are always identified by the landmark token id (50260),
+        # which is inserted at every block boundary during data preprocessing
+        # (training / no-cache eval) or by MemLMCache.forward() (cache eval).
+        is_mem = idx == self.config.landmark_id
         tok_emb = self.transformer.wte(idx) # token embeddings of shape (b, t, n_embd)
+        # Content-aware landmark selection (Contribution #2): the landmark slot's
+        # embedding is replaced with a copy of the most representative preceding
+        # token's embedding (norm- or centrality-based). Block size, is_mem
+        # positions, RoPE, grouped softmax, cache, and loss masking all remain
+        # identical to the positional baseline; only the landmark slot's input
+        # embedding changes.
+        landmark_selection = getattr(self.config, 'landmark_selection', 'positional')
+        if landmark_selection != 'positional':
+            tok_emb = self._replace_landmark_embeddings(
+                tok_emb, is_mem, landmark_selection, self.config.mem_freq
+            )
         x = pos_emb_closure.adapt_model_input(tok_emb, start_index=index_shift)
         # print("Index shift: ", index_shift)
         x = self.transformer.drop(x)
@@ -402,58 +405,50 @@ class GPTBase(nn.Module):
         logits = logits if get_logits else None
         return {'logits': logits, 'loss': loss}
 
-    def _select_landmarks_norm(self, embeddings, mem_freq):
-        B, T, C = embeddings.size()
-        norms = torch.norm(embeddings, p=2, dim=-1)
-        is_mem = torch.zeros((B, T), dtype=torch.bool, device=embeddings.device)
-        num_complete_blocks = T // mem_freq
-        for block_idx in range(num_complete_blocks):
-            block_start = block_idx * mem_freq
-            block_end = block_start + mem_freq
-            block_norms = norms[:, block_start:block_end]
-            max_indices = torch.argmax(block_norms, dim=-1)
-            abs_indices = block_start + max_indices
-            batch_indices = torch.arange(B, device=embeddings.device)
-            is_mem[batch_indices, abs_indices] = True
-        remainder = T % mem_freq
-        if remainder > 0 and num_complete_blocks > 0:
-            block_start = num_complete_blocks * mem_freq
-            block_norms = norms[:, block_start:]
-            max_indices = torch.argmax(block_norms, dim=-1)
-            abs_indices = block_start + max_indices
-            batch_indices = torch.arange(B, device=embeddings.device)
-            is_mem[batch_indices, abs_indices] = True
-        return is_mem
+    def _replace_landmark_embeddings(self, tok_emb, is_mem, method, mem_freq):
+        """Copy-and-append content-aware landmark selection.
 
-    def _select_landmarks_centrality(self, embeddings, mem_freq):
-        B, T, C = embeddings.size()
-        is_mem = torch.zeros((B, T), dtype=torch.bool, device=embeddings.device)
-        num_complete_blocks = T // mem_freq
-        for block_idx in range(num_complete_blocks):
-            block_start = block_idx * mem_freq
-            block_end = block_start + mem_freq
-            block_embs = embeddings[:, block_start:block_end, :]
-            block_mean = block_embs.mean(dim=1, keepdim=True)
-            block_embs_norm = F.normalize(block_embs, p=2, dim=-1)
-            block_mean_norm = F.normalize(block_mean, p=2, dim=-1)
-            similarities = (block_embs_norm * block_mean_norm).sum(dim=-1)
-            max_indices = torch.argmax(similarities, dim=-1)
-            abs_indices = block_start + max_indices
-            batch_indices = torch.arange(B, device=embeddings.device)
-            is_mem[batch_indices, abs_indices] = True
-        remainder = T % mem_freq
-        if remainder > 0 and num_complete_blocks > 0:
-            block_start = num_complete_blocks * mem_freq
-            block_embs = embeddings[:, block_start:, :]
-            block_mean = block_embs.mean(dim=1, keepdim=True)
-            block_embs_norm = F.normalize(block_embs, p=2, dim=-1)
-            block_mean_norm = F.normalize(block_mean, p=2, dim=-1)
-            similarities = (block_embs_norm * block_mean_norm).sum(dim=-1)
-            max_indices = torch.argmax(similarities, dim=-1)
-            abs_indices = block_start + max_indices
-            batch_indices = torch.arange(B, device=embeddings.device)
-            is_mem[batch_indices, abs_indices] = True
-        return is_mem
+        For each landmark position (is_mem == True), find the most representative
+        token among up to `mem_freq` immediately-preceding tokens and copy its
+        embedding into the landmark slot. The landmark token id's own embedding
+        (e.g. wte[50260]) is overwritten and never used.
+
+        Robust to chunks that begin mid-block: when fewer than mem_freq tokens
+        precede a landmark (or zero do), selection runs on whatever is available
+        and the slot is left untouched if there is nothing to choose from.
+
+        Args:
+            tok_emb:  (B, T, C) token embeddings from wte(idx).
+            is_mem:   (B, T) bool, True at landmark slots (id == landmark_id).
+            method:   'norm' or 'centrality'.
+            mem_freq: window size for selection (e.g. 50).
+
+        Returns:
+            (B, T, C) embeddings with landmark slots replaced.
+        """
+        new_emb = tok_emb.clone()
+        B, T, C = tok_emb.shape
+        for b in range(B):
+            positions = is_mem[b].nonzero(as_tuple=True)[0]
+            if positions.numel() == 0:
+                continue
+            for p in positions.tolist():
+                start = max(0, p - mem_freq)
+                block = tok_emb[b, start:p]  # (L, C), 0 <= L <= mem_freq
+                if block.shape[0] == 0:
+                    continue  # landmark with no preceding tokens; keep wte[id]
+                if method == 'norm':
+                    sel = torch.argmax(torch.linalg.norm(block, ord=2, dim=-1))
+                elif method == 'centrality':
+                    centroid = block.mean(dim=0, keepdim=True)
+                    block_n = F.normalize(block, p=2, dim=-1)
+                    centroid_n = F.normalize(centroid, p=2, dim=-1)
+                    sims = (block_n * centroid_n).sum(dim=-1)
+                    sel = torch.argmax(sims)
+                else:
+                    raise ValueError(f"Unknown landmark_selection method: {method}")
+                new_emb[b, p] = block[sel]
+        return new_emb
 
     def clear_state(self):
         self.lm_cache.clear_state()
