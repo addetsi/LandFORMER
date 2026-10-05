@@ -22,6 +22,7 @@ import math
 from typing import List, Optional, Tuple, Union
 
 import torch
+import torch.nn.functional as F
 import torch.utils.checkpoint
 from torch import nn
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
@@ -607,7 +608,9 @@ class LlamaPreTrainedModel(PreTrainedModel):
             if module.padding_idx is not None:
                 module.weight.data[module.padding_idx].zero_()
 
-    def _set_gradient_checkpointing(self, module, value=False):
+    def _set_gradient_checkpointing(self, module=None, value=False, enable=None, gradient_checkpointing_func=None):
+        if enable is not None:
+            value = enable
         if isinstance(module, LlamaModel):
             module.gradient_checkpointing = value
 
@@ -731,6 +734,38 @@ class LlamaModel(LlamaPreTrainedModel):
 
         return combined_attention_mask
 
+
+    def _replace_landmark_embeddings(self, inputs_embeds, is_mem, method, mem_freq):
+        """Copy-and-append content-aware landmark selection.
+        
+        For each landmark position (is_mem == True), find the most representative
+        token among up to mem_freq immediately-preceding tokens and copy its
+        embedding into the landmark slot.
+        """
+        new_emb = inputs_embeds.clone()
+        B, T, C = inputs_embeds.shape
+        for b in range(B):
+            positions = is_mem[b].nonzero(as_tuple=True)[0]
+            if positions.numel() == 0:
+                continue
+            for p in positions.tolist():
+                start = max(0, p - mem_freq)
+                block = inputs_embeds[b, start:p]
+                if block.shape[0] == 0:
+                    continue
+                if method == 'norm':
+                    sel = torch.argmax(torch.linalg.norm(block, ord=2, dim=-1))
+                elif method == 'centrality':
+                    centroid = block.mean(dim=0, keepdim=True)
+                    block_n = F.normalize(block, p=2, dim=-1)
+                    centroid_n = F.normalize(centroid, p=2, dim=-1)
+                    sims = (block_n * centroid_n).sum(dim=-1)
+                    sel = torch.argmax(sims)
+                else:
+                    raise ValueError(f"Unknown landmark_selection method: {method}")
+                new_emb[b, p] = block[sel]
+        return new_emb
+
     @add_start_docstrings_to_model_forward(LLAMA_INPUTS_DOCSTRING)
     def forward(
         self,
@@ -795,6 +830,13 @@ class LlamaModel(LlamaPreTrainedModel):
 
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
+
+        # Content-aware landmark selection: replace landmark embeddings
+        landmark_selection = getattr(self.config, 'landmark_selection', 'positional')
+        if landmark_selection != 'positional' and is_mem is not None:
+            inputs_embeds = self._replace_landmark_embeddings(
+                inputs_embeds, is_mem, landmark_selection, self.config.mem_freq
+            )
         # embed positions
         if attention_mask is None:
             attention_mask = torch.ones(

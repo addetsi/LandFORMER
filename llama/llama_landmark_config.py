@@ -9,10 +9,12 @@ class LlamaLandmarkConfig(LlamaConfig):
         mem_freq=50,
         train_context_length=512,
         include_landmark_in_loss=True,
+        landmark_selection="positional",
         **kwargs,
     ):
         self.mem_id = mem_id
         self.mem_freq = mem_freq
         self.train_context_length = train_context_length
         self.include_landmark_in_loss = include_landmark_in_loss
+        self.landmark_selection = landmark_selection
         super().__init__(**kwargs)

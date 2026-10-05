@@ -3,6 +3,12 @@ lm_benchmark/data/datasets/
 wandb/
 exps/
 data/
+checkpoints/
+.out*
+training_scripts/
+scripts/
+llama/slurms
+py.bak*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -137,3 +143,7 @@ dmypy.json
 .DS_Store
 *.slurm
 *.out
+llama/llama_landmark_config.py.bak
+llama/llama_mem.py.bak
+llama/train.py.bak
+lm_benchmark/eval_lambada.py

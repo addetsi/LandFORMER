@@ -173,6 +173,16 @@ def main(args):
     distributed_backend.sync()
     
     data = get_dataset(args) # data is a dict: {'train': train_tokenized, 'val': eval_tokenized}
+    
+    eval_split = getattr(args, "eval_split", "val")
+    if eval_split == "test":
+        use_cache = getattr(args, "use_cache", False)
+        if use_cache:
+            test_path = os.path.expanduser("~/landformer/LandFORMER/data/test.bin")
+        else:
+            test_path = os.path.expanduser("~/landformer/LandFORMER/data/pg19_processed/mem=50/test.bin")
+        print(f"Loading TEST set from {test_path}")
+        data["val"] = np.memmap(test_path, dtype=np.uint16, mode="r")
         
     print(f"Num training tokens: {len(data['train'])}")
     print(f"Num validation tokens: {len(data['val'])}")

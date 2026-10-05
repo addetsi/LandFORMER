@@ -28,7 +28,7 @@ from torch.distributed import barrier
 import os
 
 
-from datasets import load_dataset
+from datasets import load_dataset, load_from_disk
 
 IGNORE_INDEX = -100
 DEFAULT_PAD_TOKEN = "[PAD]"
@@ -51,6 +51,7 @@ class TrainingArguments(transformers.TrainingArguments):
     )
     use_flash: bool = field(default=False)
     mem_freq: int = field(default=63)
+    landmark_selection: str = field(default="positional")
 
     
 class TrainerCosine(Trainer):
@@ -157,13 +158,14 @@ def train():
 
     mem_id = tokenizer.convert_tokens_to_ids(mem_token)
     model.set_mem_id(mem_id)
+    model.config.landmark_selection = training_args.landmark_selection
     
     rank = int(os.environ.get('RANK', -1))
     if rank > 0:
         barrier()
-    dataset = load_dataset("togethercomputer/RedPajama-Data-1T-Sample", cache_dir=training_args.cache_dir)
+    dataset = load_from_disk("/home/s4251938/landformer/experiment_v2/data/redpajama_balanced")
 
-    dataset = dataset.map(partial(tokenize_fn,tokenizer),batched=True, num_proc=32, remove_columns=["text", "meta"])
+    dataset = dataset.map(partial(tokenize_fn,tokenizer),batched=True, num_proc=32, remove_columns=["text"])
 
     if training_args.use_flash:
         model.enable_landmark_insertion()
@@ -184,10 +186,17 @@ def train():
 
     trainer = TrainerCosine(
         model=model, tokenizer=tokenizer, args=training_args, 
-        train_dataset=dataset["train"],
+        train_dataset=dataset,
         eval_dataset=None,
         data_collator=data_collator)
-    trainer.train()
+    # Resume from latest checkpoint if one exists in output_dir
+    last_checkpoint = None
+    if os.path.isdir(training_args.output_dir):
+        checkpoints = [d for d in os.listdir(training_args.output_dir) if d.startswith("checkpoint-")]
+        if checkpoints:
+            last_checkpoint = os.path.join(training_args.output_dir, sorted(checkpoints, key=lambda x: int(x.split("-")[1]))[-1])
+            print(f"Resuming from checkpoint: {last_checkpoint}")
+    trainer.train(resume_from_checkpoint=last_checkpoint)
     trainer.save_state()
     trainer.save_model(output_dir=training_args.output_dir)
 

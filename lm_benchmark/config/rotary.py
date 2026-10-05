@@ -97,6 +97,7 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument('--eval_seq_length', default=512, type=int, required=False, help="Evaluation Length")
     parser.add_argument('--use_precomputed_keys', default=False, action='store_true', help='Pre-compute adapted keys at storage time (Contribution #1)')
     parser.add_argument('--eval_sample_size', default=None, type=none_or_int, required=False, help="Size of the random subset of validation set used for evaluation")
+    parser.add_argument("--eval_split", default="val", type=str, choices=["val", "test"], help="Which split to evaluate on: val or test")
     parser.add_argument('--mid_length', default=250, type=int, required=False, help="Size of chunks to break the input into")
     parser.add_argument('--allow_cache_during_training', action='store_true') 
     parser.add_argument('--postpone_lm_cache', action='store_true') 
