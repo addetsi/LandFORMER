@@ -1,28 +1,51 @@
-# Landformer
+# LandFORMER
 
-**Efficient Long-Context Language Modeling with Enhanced Landmark Attention**
+**Content-Aware Landmark Selection for Efficient Long-Context Language Modeling**
 
-Master's Thesis Project | February - August 2025
+Master's Thesis | Leiden University (LIACS) | 2025
 
 ---
 
 ## Overview
 
-Landformer extends the landmark attention mechanism ([Mohtashami & Jaggi, NeurIPS 2023](https://arxiv.org/abs/2305.16300)) to improve efficiency and retrieval quality for long-context language modeling. This repository contains the implementation and experimental evaluation.
+LandFORMER extends the landmark attention mechanism ([Mohtashami & Jaggi, NeurIPS 2023](https://arxiv.org/abs/2305.16300)) with a content-aware landmark selection strategy called **copy-and-append**. Instead of using randomly initialised special tokens as landmarks, this method replaces each landmark embedding with a copy of the most representative token in the corresponding block. The modification introduces no additional parameters, requires no changes to the attention mechanism or cache, and can be applied to any model that uses landmark attention.
 
-**Status:** 🚧 Work in progress - implementation and experimentation phase
+Two selection criteria are evaluated:
+
+- **Centrality-based** — selects the token whose embedding is closest to the block centroid (cosine similarity)
+- **Norm-based** — selects the token with the highest embedding magnitude (L2 norm)
 
 ---
 
-## Project Goals
+## Key Findings
 
-This work investigates improvements to landmark-based block retrieval for efficient transformer attention:
+The experiments reveal a consistent **perplexity–retrieval trade-off**:
 
-1. **Inference optimization** - exploring computational efficiency improvements during generation
-2. **Adaptive landmark selection** - investigating content-aware strategies for landmark placement
-3. **Architectural variants** - comparing different approaches to landmark token integration
+| Metric | Positional (baseline) | Centrality (ours) |
+|---|---|---|
+| Perplexity gap | — | +0.3–0.4 points |
+| Standard passkey (long context) | 33–45% | 90–98% |
+| Factual retrieval advantage | — | +38 pp average |
+| BLiMP linguistic competence | Equivalent | Equivalent |
 
-The project evaluates these improvements on standard language modeling benchmarks.
+- The positional baseline maintains a small perplexity advantage across all context lengths
+- Content-aware landmarks dramatically outperform on targeted extraction (~50 percentage points on passkey retrieval)
+- The advantage extends to split-digit, split-integer, factual extraction, and needle-in-a-haystack tasks at context lengths up to 72,000 characters
+- Post-hoc analysis traces the advantage to more discriminative landmark key vectors
+
+---
+
+## Experiments
+
+Experiments are conducted at two model scales:
+
+### Small scale (150M parameters)
+- GPT-2 architecture trained on PG-19 for 240,000 iterations
+- Evaluations: perplexity (512–4,096 tokens), convergence dynamics, test set generalisation, BLiMP linguistic competence
+
+### Large scale (7B parameters)
+- LLaMA-2 7B fine-tuned with landmark attention
+- Evaluations: passkey retrieval (5 variants), factual extraction, needle-in-a-haystack on PG-19 books, context lengths up to 72,000 characters
 
 ---
 
@@ -36,16 +59,9 @@ PyTorch 2.0+
 CUDA 11.8+ (for GPU training)
 ```
 
-
-
 ### Data Preparation
 
-**WikiText-2** (for development and testing):
-```bash
-python scripts/prepare_wikitext.py
-```
-
-**PG-19** (for final evaluation):
+**PG-19:**
 ```bash
 # Download PG-19 from https://github.com/deepmind/pg19
 python data/pg19/prepare.py
@@ -58,15 +74,16 @@ python data/pg19/prepare.py
 ### Training
 
 ```bash
-# Train baseline model on WikiText-2
+# Train with centrality-based landmark selection
 python main.py \
   --config_format rotary \
   --model base_rotary \
-  --dataset wikitext2 \
+  --dataset pg19 \
   --n_layer 6 --n_head 8 --n_embd 512 \
   --sequence_length 512 \
   --mem_freq 50 \
-  --iterations 1000 \
+  --landmark_selection centrality \
+  --iterations 240000 \
   --batch_size 4 \
   --device cuda:0
 ```
@@ -74,7 +91,7 @@ python main.py \
 ### Evaluation
 
 ```bash
-# Evaluate on test set
+# Evaluate perplexity
 python eval.py \
   --checkpoint ./exps/[CHECKPOINT_PATH] \
   --eval_seq_length 4096 \
@@ -90,7 +107,7 @@ python eval.py \
 landformer/
 ├── lm_benchmark/
 │   ├── models/
-│   │   ├── landmark.py          # Main model implementation
+│   │   ├── landmark.py          # Main model with copy-and-append
 │   │   ├── caches/
 │   │   │   ├── mem_cache.py     # Block-based memory cache
 │   │   │   └── cache.py         # Cache base classes
@@ -107,55 +124,16 @@ landformer/
 
 ---
 
-## Baseline Model
+## Baseline
 
 This work builds on the landmark attention approach:
 
-**Landmark Attention** (Mohtashami & Jaggi, 2023)
-- Uses special landmark tokens to organize memory into blocks
-- Achieves O(n) complexity through block-based retrieval
-- Supports context lengths up to 32K tokens
-- Paper: [https://arxiv.org/abs/2305.16300](https://arxiv.org/abs/2305.16300)
-- Code: [https://github.com/epfml/landmark-attention](https://github.com/epfml/landmark-attention)
-
----
-
-## Evaluation Metrics
-
-**Primary:**
-- Perplexity on PG-19 test set (target baseline: ~14.72)
-- Inference speed (tokens/second)
-
-**Secondary:**
-- Peak memory usage (GB)
-- Context length scaling
-
-**Baseline Comparison:**
-- Landmark attention (Mohtashami & Jaggi, 2023)
-- Transformer-XL (Dai et al., 2019)
-
----
-
-## Implementation Notes
-
-### Development Workflow
-
-1. **Phase 1:** WikiText-2 testing and validation
-   - Fast iteration cycles (training in minutes)
-   - Debugging and verification of modifications
-   - Ensure correctness before scaling to PG-19
-
-2. **Phase 2:** PG-19 final evaluation  
-   - Full-scale training (hours to days)
-   - Final results for thesis
-
-### Experiment Tracking
-
-All experiments are logged with:
-- Configuration parameters
-- Training curves (loss, perplexity)
-- Evaluation metrics (perplexity, speed, memory)
-- Results saved to `./results/` as JSON
+- **Landmark Attention** (Mohtashami & Jaggi, NeurIPS 2023)
+  - Inserts special landmark tokens at fixed intervals to organise memory into blocks
+  - Uses grouped softmax for block-level attention gating
+  - Supports long-context inference through block-based cache retrieval
+  - Paper: [https://arxiv.org/abs/2305.16300](https://arxiv.org/abs/2305.16300)
+  - Code: [https://github.com/epfml/landmark-attention](https://github.com/epfml/landmark-attention)
 
 ---
 
@@ -179,20 +157,20 @@ If you use this code, please cite the original landmark attention paper:
 
 ```bibtex
 @inproceedings{mohtashami2023landmark,
-  title={Landmark Attention: Random-Access Infinite Context Length for Transformers},
+  title={{Random-Access Infinite Context Length for Transformers}},
   author={Mohtashami, Amirkeivan and Jaggi, Martin},
-  booktitle={Advances in Neural Information Processing Systems},
+  booktitle={Advances in Neural Information Processing Systems 36 (NeurIPS 2023)},
   year={2023}
 }
 ```
 
 ---
 
-## Acknowledgments
+## Acknowledgements
 
-This project builds upon the landmark attention implementation by Mohtashami & Jaggi (2023). 
+Thesis supervision: Prof. Dr. Suzan Verberne, Leiden University (LIACS).
 
-Thesis supervision: Suzan Verbane, Leiden University
+This project builds upon the landmark attention implementation by Mohtashami & Jaggi (2023).
 
 ---
 
@@ -204,15 +182,7 @@ This project is developed as part of a master's thesis at Leiden University. The
 
 ## Contact
 
-**Student:** Godwin Addetsi 
-**Institution:** Leiden Institute of Advanced Computer Science (LIACS), Leiden University  
-**Program:** MSc Computer Science  
+**Student:** Godwin Addetsi
+**Institution:** Leiden Institute of Advanced Computer Science (LIACS), Leiden University
+**Program:** MSc Computer Science
 **Email:** godwinaddetsi12@gmail.com
-**Expected Completion:** August 2025
-
----
-
-
-
-
-*This is a research project in active development. Code and documentation are subject to change.*
